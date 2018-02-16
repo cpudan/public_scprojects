@@ -2,68 +2,65 @@
 MIDIIn.connectAll;
 
 
-
 (
 SynthDef(\simpler, {
 	arg note, detune=0, atk, gate, release=0, lfofreq=1, out=0;
 	var sig, env, freq;
-	freq = note.midicps + ~bend;
-	sig = SinOsc.ar(freq,mul: Saw.kr(lfofreq,2)	);
-	// sig = sig + Saw.ar(lfofreq,1);
-	// sig = PitchShift.kr(sig,0.2,In.kr(detune));
-	env = EnvGen.kr(Env.asr(atk,0.3,release),gate);
-	sig = LPF.ar(sig * env, 1100);
-	// out = 0;
+	freq = note.midicps + detune;
+	sig = SinOsc.ar(freq,mul: Saw.kr(lfofreq));
+	env = EnvGen.ar(Env.adsr(atk,0.3,0.5,release), gate);
+	sig = sig*env;
+	sig = LPF.ar(sig, 1100);
 	Out.ar(out, sig);
-}).add;
-
-SynthDef(\hold, {
-	arg val, out;
-	Out.kr(out, EnvGen.kr(Env.new([val],[0])));
 }).add;
 )
 
-(
 
-~keys = Array.newClear(127);
-~chanMap = Dictionary.new(127);
-// ~bendBus = Dictionary.new(127);
-// ~bendBus = Bus.control(s,1);
-// ~bend = Synth(\hold, [val: 0, out: ~bendBus]);
-~bend = 0;
+(
+MIDIdef.freeAll;
+~chanMap = Dictionary.new();
 
 MIDIdef(\noteOn, {// strike
-	arg vel, note, channel, out, bendbus;
-	if (~keys[note] != Nil, {~keys[note].free;});
+	arg vel, note, channel;
+	var out, synth;
+	synth = ~chanMap[channel];
+	if (synth != Nil, {	/*synth.free;*/ ~chanMap.removeAt(channel);});
     out = if(((note.mod(24)) < 12) == true, {0}, {1});
-	~keys[note] = Synth(\simpler,
-		[note: note, atk: vel.linlin(0,127,0.5,0), gate:1, out: out, detune: ~bend]);
-	~chanMap.put(channel, note);
+	~chanMap.put(channel, Synth(\simpler, [note: note, atk: vel.linlin(0,127,2,0), gate:1, out: out, detune: 0, lfofreq: 1]));
 }, msgType: \noteOn);
 
 MIDIdef(\noteOff, {// lift
 	arg vel, note, channel;
-	~keys[note].set(\release, vel.linlin(0,127, 2, 0));
-	~keys[note].set(\gate, 0);
+	var synth = ~chanMap[channel];
+	if(synth != Nil, {
+		synth.set(\release, vel.linlin(0,127, 2, 0));
+		synth.set(\gate, 0);
+	});
 }, msgType: \noteOff);
 
 MIDIdef(\touch, {// press
 	arg pressure, channel;
-	var note = ~chanMap[channel];
-	~keys[note].set(\lfofreq, pressure.linexp(0,127,4,note));
+	var synth = ~chanMap[channel];
+	if(synth != Nil, {
+		synth.get(\note, {arg note;
+			synth.set(\lfofreq, pressure.linexp(0,127,4,note));
+		});
+	});
 }, msgType: \touch);
 
 MIDIdef(\bend, {// Glide
 	arg bend, channel;
-	var note, bus;
-	~bend = bend - 8192;
-	// ~bend.set(\val, bend/8192);
+	var synth = ~chanMap[channel];
+	if(synth != Nil, {synth.set(\detune, bend/10)});
 }, msgType: \bend);
-)
-8192/2
 
-Synth(\hold, [val: 2, out: ])
-
-(
-MIDIdef.freeAll;
+MIDIdef(\control, {// Slide
+	arg value, cc, channel;
+	var synth = ~chanMap[channel];
+	if(synth != Nil, {
+		synth.get(\note, {arg note;
+			synth.set(\lfofreq, value.linexp(0,127,4,note));
+		});
+	});
+}, msgType: \control);
 )
